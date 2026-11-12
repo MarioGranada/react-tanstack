@@ -1,18 +1,16 @@
 import { QueryClient } from '@tanstack/react-query';
 
+// Same-origin API: Vercel routes /api to the Express service; Vite proxies it in dev.
+const API_URL = '/api';
+
 export const queryClient = new QueryClient();
 
 export async function fetchEvents({ signal, searchTerm, max }) {
-  console.log(searchTerm);
-  let url = 'http://localhost:3000/events';
-
-  if (searchTerm && max) {
-    url += '?search=' + searchTerm + '&max=' + max;
-  } else if (searchTerm) {
-    url += '?search=' + searchTerm;
-  } else if (max) {
-    url += '?max=' + max;
-  }
+  const params = new URLSearchParams();
+  if (searchTerm) params.set('search', searchTerm);
+  if (max) params.set('max', max);
+  const query = params.toString();
+  const url = `${API_URL}/events${query ? `?${query}` : ''}`;
 
   const response = await fetch(url, { signal: signal });
 
@@ -29,7 +27,7 @@ export async function fetchEvents({ signal, searchTerm, max }) {
 }
 
 export async function createNewEvent(eventData) {
-  const response = await fetch(`http://localhost:3000/events`, {
+  const response = await fetch(`${API_URL}/events`, {
     method: 'POST',
     body: JSON.stringify(eventData),
     headers: {
@@ -50,7 +48,7 @@ export async function createNewEvent(eventData) {
 }
 
 export async function fetchSelectableImages({ signal }) {
-  const response = await fetch(`http://localhost:3000/events/images`, {
+  const response = await fetch(`${API_URL}/events/images`, {
     signal,
   });
 
@@ -67,7 +65,7 @@ export async function fetchSelectableImages({ signal }) {
 }
 
 export async function fetchEvent({ id, signal }) {
-  const response = await fetch(`http://localhost:3000/events/${id}`, {
+  const response = await fetch(`${API_URL}/events/${id}`, {
     signal,
   });
 
@@ -84,7 +82,7 @@ export async function fetchEvent({ id, signal }) {
 }
 
 export async function deleteEvent({ id }) {
-  const response = await fetch(`http://localhost:3000/events/${id}`, {
+  const response = await fetch(`${API_URL}/events/${id}`, {
     method: 'DELETE',
   });
 
@@ -99,7 +97,7 @@ export async function deleteEvent({ id }) {
 }
 
 export async function updateEvent({ id, event }) {
-  const response = await fetch(`http://localhost:3000/events/${id}`, {
+  const response = await fetch(`${API_URL}/events/${id}`, {
     method: 'PUT',
     body: JSON.stringify({ event }),
     headers: {

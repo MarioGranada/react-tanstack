@@ -2,9 +2,19 @@
 
 An events app used to practise server-state management with TanStack Query. Events are fetched, cached, searched, created, edited, and deleted through query and mutation hooks instead of hand-written loading and error state.
 
-A small Express API persists events and image metadata to JSON files and adds artificial delays to some routes so loading and caching behaviour is visible.
+A small Express API stores events in a `react_tanstack` schema of a hosted Supabase Postgres database and adds artificial delays to some routes so loading and caching behaviour is visible. The SPA and the API deploy together as one Vercel project.
 
 > **Follow-along project.** This app was built while following **React — The Complete Guide (Academind / Maximilian Schwarzmüller)**. It is included in the portfolio as a learning exercise, not as a production product. The implementation is my own work based on the course material.
+
+## Live demo
+
+| | |
+| --- | --- |
+| **Live site** | https://react-tanstack-lemon.vercel.app |
+| **Repository** | https://github.com/MarioGranada/react-tanstack |
+| **Portfolio summary** | Events app built around TanStack Query: cached and searchable lists, mutations with cache invalidation and loader prefetching, backed by an Express API and Supabase Postgres on Vercel. |
+
+The demo is public: anyone can add, edit, or delete events. The data is reset to three sample events every night (04:00 UTC).
 
 ## Features
 
@@ -24,17 +34,24 @@ A small Express API persists events and image metadata to JSON files and adds ar
 | Frontend | React 18 + Vite |
 | Server state | TanStack Query v5 |
 | Routing | React Router 6 |
-| Backend | Express 4 |
+| Backend | Express 5 (Vercel Function in production) |
+| Persistence | Supabase Postgres via postgres.js |
+| Hosting | Vercel Services (frontend + backend in one project), nightly Vercel Cron |
 | Styling | Plain CSS |
 
 ## Project structure
 
 ```text
 react-tanstack/
+├── vercel.json                # Services (frontend, backend), /api routing, nightly cron
 ├── backend/
-│   ├── app.js                 # Express API (port 3000)
-│   ├── data/                  # events.json, images.json
-│   └── public/                # Event images
+│   ├── app.js                 # Express API; every route under /api
+│   ├── server.js              # Local dev server (port 3000)
+│   ├── data/                  # events.js (SQL), images.js (selectable images)
+│   ├── db/                    # postgres.js client, schema + seed SQL, reset helper
+│   ├── routes/cron.js         # GET /api/cron/reset (needs CRON_SECRET)
+│   └── scripts/db.js          # npm run db:migrate | db:reset
+├── public/images/             # Event images (served by the frontend)
 ├── src/
 │   ├── components/
 │   │   ├── Events/            # Events, lists, detail, form, create, edit
@@ -52,41 +69,35 @@ react-tanstack/
 
 ### Requirements
 
-- Node.js 18+.
+- Node.js 22 LTS.
 - npm (lockfiles are committed for both apps).
+- The Vercel CLI, linked to the project, to pull the database URL (`vercel link`, then `vercel env pull .env.local` in the repo root).
 - Two terminals: one for the API and one for Vite.
 
 ### 1. Install dependencies
 
 ```bash
-# Backend
-cd backend && npm install
-
-# Frontend
-cd .. && npm install
+npm ci
+npm ci --prefix backend
 ```
 
-### 2. Run locally
-
-**Start the backend API**
+### 2. Configure the database
 
 ```bash
-cd backend && npm start
+vercel env pull .env.local            # POSTGRES_URL, POSTGRES_URL_NON_POOLING, CRON_SECRET
+npm run db:migrate --prefix backend   # idempotent: creates the schema and seed events
 ```
 
-Open http://localhost:3000.
+`.env.local` is gitignored. Any Postgres works locally: set `POSTGRES_URL` to it instead.
 
-Serves `/events`, `/events/images`, and event images.
-
-**Start the frontend**
+### 3. Run locally
 
 ```bash
-npm run dev
+npm run dev --prefix backend   # API on http://localhost:3000/api
+npm run dev                    # Vite on http://localhost:5173
 ```
 
-Open http://localhost:5173.
-
-The app calls `http://localhost:3000` directly; there is no Vite proxy.
+Vite proxies `/api` to the backend, so the SPA uses the same relative URLs as in production. Event images are served from `public/images`.
 
 ### Available scripts
 
@@ -95,8 +106,10 @@ The app calls `http://localhost:3000` directly; there is no Vite proxy.
 | `npm run dev` | Start Vite on port 5173. |
 | `npm run build` | Build the frontend into `dist/`. |
 | `npm run preview` | Preview the production build. |
-| `npm run lint` | Run ESLint over JS/JSX files. |
-| `cd backend && npm start` | Start the Express API on port 3000. |
+| `npm run lint` | ESLint (currently fails: the repo has no ESLint config). |
+| `npm run dev --prefix backend` | API with `--watch` on port 3000. |
+| `npm run db:migrate --prefix backend` | Apply the schema and seed (idempotent). |
+| `npm run db:reset --prefix backend` | Empty the events table and restore the seed. |
 
 ## How it works
 
@@ -110,21 +123,23 @@ The app calls `http://localhost:3000` directly; there is no Vite proxy.
 
 `NewEvent` mutates and invalidates `["events"]`. `EditEvent` prefetches through a route loader using `queryClient.fetchQuery`, then submits with a router action that calls `updateEvent` and invalidates the detail key.
 
-The backend filters by `search`, slices the newest `max` events, validates required fields, and delays detail, update, and delete responses by one second to make pending states visible.
+The backend filters by `search`, returns the newest `max` events, validates required fields (the image must be one of the selectable images), and delays detail, update, and delete responses by one second to make pending states visible. Server errors return a generic message; database errors are only logged on the server.
 
 ## Deployment
 
-- Target: GitHub Actions can build the Vite frontend and publish `dist/` to GitHub Pages.
-- The Express API needs a Node host, or replacement with Supabase. JSON files and local images are not durable on serverless hosting.
-- Replace the hardcoded `http://localhost:3000` URLs in `src/utils/http.js` and `EventItem.jsx` before deploying.
-- A static host needs SPA fallback so deep links such as `/events/123` serve `index.html`.
+- **Live:** https://react-tanstack-lemon.vercel.app
+- One Vercel project with two [Services](https://vercel.com/docs/services) defined in `vercel.json`: `frontend` (Vite static build from the repo root, with SPA fallback) and `backend` (Express as a Vercel Function). `/api/*` routes to the backend, everything else to the frontend.
+- Pushing to `master` deploys production.
+- The database comes from the Supabase integration on Vercel, which injects `POSTGRES_URL` into every environment. `CRON_SECRET` protects the reset endpoint.
+- A daily Vercel Cron calls `/api/cron/reset` at 04:00 UTC to restore the seed events.
 
 ## Notes and limitations
 
 - `gcTime` is set to 1000 ms in `NewEventsSection`, which is extremely short; cached events disappear quickly after unmount.
 - The optimistic-update mutation in `EditEvent` is commented out; editing uses a router action instead.
 - The backend adds a one-second delay to detail, update, and delete routes on purpose.
-- API URLs are hardcoded in the HTTP helper and in `EventItem.jsx`.
+- There is no authentication: every visitor shares and can change the same events until the nightly reset.
+- `npm run lint` has no ESLint config to run against (pre-existing).
 - There are no automated tests.
 
 ---

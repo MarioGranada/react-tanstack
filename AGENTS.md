@@ -6,21 +6,24 @@ Compact guide for future OpenCode sessions. It records only the facts an agent i
 
 | Command | Description |
 | --- | --- |
-| `cd backend && npm install && npm start` | Run the API on port 3000. |
-| `npm install && npm run dev` | Run the frontend on port 5173. |
+| `vercel env pull .env.local` | Pull `POSTGRES_URL` and `CRON_SECRET` into the gitignored root `.env.local`. |
+| `npm ci --prefix backend && npm run db:migrate --prefix backend` | Install the API and apply the idempotent schema + seed. |
+| `npm run dev --prefix backend` | Run the API on port 3000 (routes under `/api`). |
+| `npm ci && npm run dev` | Run the frontend on port 5173; Vite proxies `/api`. |
 | `npm run build` | Verify the production bundle. |
-| `npm run lint` | Run ESLint. |
+| `npm run lint` | ESLint — fails today because the repo has no ESLint config. |
 
 ## Requirements
 
-- Node.js 18+.
+- Node.js 22 LTS (`backend/package.json` pins `22.x` for the Vercel Function).
 - npm (lockfiles are committed for both apps).
 - Two terminals: one for the API and one for Vite.
 
 ## Environment
 
-- No environment variables are used. API URLs are hardcoded.
-- The backend must run from `backend/` so its relative data and public paths resolve.
+- `POSTGRES_URL` (transaction pooler) and `POSTGRES_URL_NON_POOLING` come from the Supabase integration on Vercel. `CRON_SECRET` protects `/api/cron/reset`. Locally they live in the root `.env.local` (gitignored); backend scripts load it with `--env-file-if-exists=../.env.local`.
+- The SPA calls the same-origin `/api`; there is no API URL variable.
+- Never commit `.env*` files (except `.env.example`), `.vercel/`, database URLs, or credentials.
 
 ## Architecture
 
@@ -30,12 +33,17 @@ Compact guide for future OpenCode sessions. It records only the facts an agent i
 - `src/components/Events/FindEventSection.jsx` — enabled search query.
 - `src/components/Events/EventDetails.jsx` — detail query and delete mutation.
 - `src/components/Events/EditEvent.jsx` — loader prefetch and update action.
-- `backend/app.js` — JSON API with search, max, and artificial delays.
+- `vercel.json` — Vercel Services: `frontend` (repo root, Vite, SPA fallback) and `backend` (Express); `/api/*` → backend; nightly cron.
+- `backend/app.js` — Express 5 API with search, max, validation and artificial delays; exported for Vercel, `server.js` only listens locally.
+- `backend/data/events.js` — SQL; `backend/data/images.js` — the selectable images (files in `public/images`).
+- `backend/db/sql.js` — schema + seed and reset SQL (in JS so the function bundle includes it); `db/seed.js` applies them.
+- `backend/routes/cron.js` — nightly reset, refuses requests without `Bearer $CRON_SECRET`.
 
 ## Commands and build order
 
 - Run both servers; the UI cannot load events or images without the API.
-- `npm run lint` and `npm run build` are the gates; there are no tests.
+- `npm run build` is the gate; there are no tests and lint has no config yet.
+- Schema changes go in `backend/db/sql.js`, must stay idempotent, and need `npm run db:migrate --prefix backend` against the shared database.
 
 ## Conventions and gotchas
 
@@ -43,7 +51,11 @@ Compact guide for future OpenCode sessions. It records only the facts an agent i
 - `enabled: false` prevents a query from running, but the hook still returns a pending state.
 - Invalidate with the broad `["events"]` key after mutations that change the list.
 - Do not read `error.info` unless the thrown error actually carries it.
-- Starting the API from the repository root breaks `./data` and `./public` paths.
+- Every API route lives under `/api`, because Vercel passes the original path to the backend service.
+- Images are static files in `public/images`; the API only stores the file name.
+- Do not read files at runtime in the backend: the Vercel service bundle only includes traced JS.
+- Keep `prepare: false` in `db/index.js` (the Supabase pooler has no prepared statements).
+- The database is shared with other portfolio apps; only touch the `react_tanstack` schema.
 
 ## Memory
 

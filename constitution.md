@@ -18,7 +18,9 @@ This document defines the non-negotiable foundations for this repository. Read i
 | Frontend | React 18 + Vite | Fast iteration for the course project. |
 | Server state | TanStack Query v5 | Caching, background refetching, mutations, and invalidation. |
 | Routing | React Router 6 | Routes and a loader/action pair for editing. |
-| Backend | Express 4 | JSON-backed event API with search and image endpoints. |
+| Backend | Express 5 | Event API with search and image endpoints; runs as a Vercel Function. |
+| Persistence | Supabase Postgres (postgres.js) | Durable storage on serverless hosting; one schema (`react_tanstack`) in the shared portfolio database. |
+| Hosting | Vercel Services + Cron | SPA and API ship together on one origin; nightly demo reset. |
 | Styling | Plain CSS | Keeps the focus on query behaviour. |
 
 **Rule of thumb:** a new dependency must solve a concrete problem that the current stack cannot solve cleanly. Justify it in the change that introduces it.
@@ -27,23 +29,25 @@ This document defines the non-negotiable foundations for this repository. Read i
 
 ### 1. Scope
 
-A course project for learning TanStack Query. It is intentionally a small CRUD app; authentication, pagination, and production persistence are out of scope.
+A course project for learning TanStack Query. It is intentionally a small CRUD app; authentication and pagination are out of scope. The public demo is kept clean by a nightly reset, not by moderation.
 
 ### 2. Environment Isolation
 
-- This project has no runtime secrets. Do not introduce `.env` files unless a real secret or environment-specific URL appears.
-- If configuration is added, use environment variables and document them in the README.
-- Never commit keys, tokens, database URLs, or credentials.
+- Runtime configuration comes from environment variables: `POSTGRES_URL` / `POSTGRES_URL_NON_POOLING` (Supabase integration) and `CRON_SECRET`. Locally they live in the gitignored root `.env.local` (`vercel env pull .env.local`).
+- Document every variable in the README and `AGENTS.md`.
+- Never commit keys, tokens, database URLs, or credentials, and never log them or send database errors to the browser.
 
 ### 3. Architecture
 
 - All server-state access goes through `src/utils/http.js`; components should not call `fetch` directly.
 - Query keys are part of the API: keep them consistent across queries, loaders, and invalidations.
-- The Express API stays a small JSON fixture.
+- The Express API stays small: every route lives under `/api`, validates input, and never reads files at runtime (SQL lives in `backend/db/sql.js`).
+- The reset endpoint refuses any request without `Authorization: Bearer $CRON_SECRET`.
 
 ### 4. Data and State
 
-- TanStack Query owns the client cache; the backend JSON files are the source of truth.
+- TanStack Query owns the client cache; the `react_tanstack.events` table is the source of truth. Schema and seed changes stay idempotent.
+- Only touch the `react_tanstack` schema; the database is shared with other portfolio apps.
 - Mutations must invalidate the affected query keys.
 - Artificial delays exist to exercise loading states; do not remove them without updating the UI expectations.
 
@@ -55,15 +59,15 @@ A course project for learning TanStack Query. It is intentionally a small CRUD a
 
 ### 6. Quality Gates
 
-- `npm run lint` and `npm run build` are the gates.
+- `npm run build` is the gate (`npm run lint` needs an ESLint config first).
 - Manually test initial load, search, create, edit, delete, cancel, API down, and slow responses.
 - Confirm cached data appears immediately on back-navigation and is invalidated after mutations.
 
 ### 7. Deployment
 
-- Frontend: static build for GitHub Pages with SPA fallback.
-- Backend: a Node host or a Supabase replacement; JSON files are not durable hosting storage.
-- Move API URLs into environment variables before deploying.
+- One Vercel project (Services in `vercel.json`): `frontend` serves the Vite build with SPA fallback, `backend` runs Express. Pushing to `master` deploys production.
+- The nightly cron `/api/cron/reset` restores the seed data.
+- Delete any test data written to production after verifying.
 
 ## What to Avoid
 

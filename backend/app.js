@@ -1,175 +1,101 @@
-import fs from 'node:fs/promises';
-
-import bodyParser from 'body-parser';
 import express from 'express';
 
+import cronRoutes from './routes/cron.js';
+import { images } from './data/images.js';
+import { createEvent, deleteEvent, getEvent, listEvents, updateEvent } from './data/events.js';
+
 const app = express();
+app.use(express.json());
 
-app.use(bodyParser.json());
-app.use(express.static('public'));
+// Deliberate delays let the frontend show TanStack Query loading states.
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader(
-    'Access-Control-Allow-Methods',
-    'GET, POST, PUT, DELETE, OPTIONS'
+const IMAGE_PATHS = new Set(images.map((image) => image.path));
+const isText = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
+
+function isValidEvent(event) {
+  return (
+    isText(event.title, 200) &&
+    isText(event.description, 2000) &&
+    isText(event.date, 30) &&
+    isText(event.time, 20) &&
+    isText(event.location, 300) &&
+    IMAGE_PATHS.has(event.image)
   );
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-Requested-With,content-type'
-  );
-  next();
-});
+}
 
-app.get('/events', async (req, res) => {
+// Everything lives under /api: on Vercel the SPA and the API share one origin,
+// and in development Vite proxies /api to this server.
+const api = express.Router();
+
+api.get('/events', async (req, res) => {
   const { max, search } = req.query;
-  const eventsFileContent = await fs.readFile('./data/events.json');
-  let events = JSON.parse(eventsFileContent);
-
-  if (search) {
-    events = events.filter((event) => {
-      const searchableText = `${event.title} ${event.description} ${event.location}`;
-      return searchableText.toLowerCase().includes(search.toLowerCase());
-    });
-  }
-
-  if (max) {
-    events = events.slice(events.length - max, events.length);
-  }
-
-  res.json({
-    events: events.map((event) => ({
-      id: event.id,
-      title: event.title,
-      image: event.image,
-      date: event.date,
-      location: event.location,
-    })),
+  const events = await listEvents({
+    search: typeof search === 'string' && search.length <= 200 ? search : null,
+    max,
   });
+  res.json({ events });
 });
 
-app.get('/events/images', async (req, res) => {
-  const imagesFileContent = await fs.readFile('./data/images.json');
-  const images = JSON.parse(imagesFileContent);
-
+api.get('/events/images', (req, res) => {
   res.json({ images });
 });
 
-app.get('/events/:id', async (req, res) => {
-  const { id } = req.params;
-
-  const eventsFileContent = await fs.readFile('./data/events.json');
-  const events = JSON.parse(eventsFileContent);
-
-  const event = events.find((event) => event.id === id);
-
+api.get('/events/:id', async (req, res) => {
+  const event = await getEvent(req.params.id);
   if (!event) {
-    return res
-      .status(404)
-      .json({ message: `For the id ${id}, no event could be found.` });
+    return res.status(404).json({ message: `For the id ${req.params.id}, no event could be found.` });
   }
-
-  setTimeout(() => {
-    res.json({ event });
-  }, 1000);
+  await delay(1000);
+  res.json({ event });
 });
 
-app.post('/events', async (req, res) => {
+api.post('/events', async (req, res) => {
   const { event } = req.body;
-
   if (!event) {
     return res.status(400).json({ message: 'Event is required' });
   }
-
-  console.log(event);
-
-  if (
-    !event.title?.trim() ||
-    !event.description?.trim() ||
-    !event.date?.trim() ||
-    !event.time?.trim() ||
-    !event.image?.trim() ||
-    !event.location?.trim()
-  ) {
+  if (!isValidEvent(event)) {
     return res.status(400).json({ message: 'Invalid data provided.' });
   }
-
-  const eventsFileContent = await fs.readFile('./data/events.json');
-  const events = JSON.parse(eventsFileContent);
-
-  const newEvent = {
-    id: Math.round(Math.random() * 10000).toString(),
-    ...event,
-  };
-
-  events.push(newEvent);
-
-  await fs.writeFile('./data/events.json', JSON.stringify(events));
-
+  const newEvent = await createEvent(event);
   res.json({ event: newEvent });
 });
 
-app.put('/events/:id', async (req, res) => {
-  const { id } = req.params;
+api.put('/events/:id', async (req, res) => {
   const { event } = req.body;
-
   if (!event) {
     return res.status(400).json({ message: 'Event is required' });
   }
-
-  if (
-    !event.title?.trim() ||
-    !event.description?.trim() ||
-    !event.date?.trim() ||
-    !event.time?.trim() ||
-    !event.image?.trim() ||
-    !event.location?.trim()
-  ) {
+  if (!isValidEvent(event)) {
     return res.status(400).json({ message: 'Invalid data provided.' });
   }
-
-  const eventsFileContent = await fs.readFile('./data/events.json');
-  const events = JSON.parse(eventsFileContent);
-
-  const eventIndex = events.findIndex((event) => event.id === id);
-
-  if (eventIndex === -1) {
+  const updated = await updateEvent(req.params.id, event);
+  if (!updated) {
     return res.status(404).json({ message: 'Event not found' });
   }
-
-  events[eventIndex] = {
-    id,
-    ...event,
-  };
-
-  await fs.writeFile('./data/events.json', JSON.stringify(events));
-
-  setTimeout(() => {
-    res.json({ event: events[eventIndex] });
-  }, 1000);
+  await delay(1000);
+  res.json({ event: updated });
 });
 
-app.delete('/events/:id', async (req, res) => {
-  const { id } = req.params;
-
-  const eventsFileContent = await fs.readFile('./data/events.json');
-  const events = JSON.parse(eventsFileContent);
-
-  const eventIndex = events.findIndex((event) => event.id === id);
-
-  if (eventIndex === -1) {
+api.delete('/events/:id', async (req, res) => {
+  const deleted = await deleteEvent(req.params.id);
+  if (!deleted) {
     return res.status(404).json({ message: 'Event not found' });
   }
-
-  events.splice(eventIndex, 1);
-
-  await fs.writeFile('./data/events.json', JSON.stringify(events));
-
-  setTimeout(() => {
-    res.json({ message: 'Event deleted' });
-  }, 1000);
+  await delay(1000);
+  res.json({ message: 'Event deleted' });
 });
 
-app.listen(3000, () => {
-  console.log('Server running on port 3000');
+api.use('/cron', cronRoutes);
+api.use((req, res) => res.status(404).json({ message: 'Not found' }));
+app.use('/api', api);
+
+// Express 5 forwards rejected promises from async handlers here.
+// Never send database errors to the browser.
+app.use((error, req, res, next) => {
+  console.error(error);
+  res.status(500).json({ message: 'Something went wrong.' });
 });
+
+export default app;
